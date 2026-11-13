@@ -7,5 +7,6 @@
     "[cpp]": {
         "editor.defaultFormatter": "ms-vscode.cpptools",
         "editor.formatOnSave": true
-    }
+    },
+    "idf.currentSetup": "D:\\esp\\v6.1\\esp-idf"
 }
