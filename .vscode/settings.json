@@ -1,12 +1,29 @@
 {
-    "C_Cpp.clang_format_style": "file",
-    "[c]": {
-        "editor.defaultFormatter": "ms-vscode.cpptools",
-        "editor.formatOnSave": true
+  "C_Cpp.intelliSenseEngine": "default",
+  "idf.extensionActivationMode": "always",
+  "cmake.configureOnOpen": false,
+  "cmake.configureOnEdit": false,
+  "cmake.automaticReconfigure": false,
+  "cmake.autoSelectActiveFolder": false,
+  "cmake.options.advanced": {
+    "build": {
+      "statusBarVisibility": "inherit",
+      "inheritDefault": "hidden"
     },
-    "[cpp]": {
-        "editor.defaultFormatter": "ms-vscode.cpptools",
-        "editor.formatOnSave": true
+    "launch": {
+      "statusBarVisibility": "inherit",
+      "inheritDefault": "hidden"
     },
-    "idf.currentSetup": "D:\\esp\\v6.1\\esp-idf"
+    "debug": {
+      "statusBarVisibility": "inherit",
+      "inheritDefault": "hidden"
+    }
+  },
+  "clangd.path": "D:\\Espressif\\tools\\esp-clangd\\esp-21.1.3_20260408\\esp-clangd\\bin\\clangd.exe",
+  "clangd.arguments": [
+    "--background-index",
+    "--query-driver=**",
+    "--compile-commands-dir=d:\\works_shimu\\voice ctrl sg via BLE\\esp32_c3_ble_controller\\build"
+  ],
+  "idf.currentSetup": "D:\\esp\\v6.1\\esp-idf"
 }
