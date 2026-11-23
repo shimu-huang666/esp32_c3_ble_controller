@@ -22,7 +22,7 @@
 
 /**
  * @file ble_controller.c
- * @brief C3 外围设备：广播通信服务，接收并校验 PING，为已订阅的连接调度 PONG 通知。
+ * @brief C3 外围设备：广播通信服务，处理 PING/PONG 和 SG90 目标角度设置。
  * @note GAP（Generic Access Profile，通用访问规范）管理广播与连接；
  *       GATT（Generic Attribute Profile，通用属性规范）管理服务、特征和数据访问。
  */
@@ -32,6 +32,7 @@
 
 #include "ble_controller.h"
 #include "ble_protocol.h"
+#include "servo_control.h"
 #include "esp_log.h"
 #include "host/ble_hs.h"
 #include "host/util/util.h"
@@ -55,6 +56,8 @@ static const ble_uuid128_t CHARACTERISTIC_UUID = BLE_LINK_CHARACTERISTIC_UUID;
 static uint8_t s_own_address_type;
 /** 协议栈注册服务时回填的特征值句柄，用于识别订阅事件。 */
 static uint16_t s_value_handle;
+/** 当前单连接是否开启通知；角度命令要求先订阅，以便返回设置回执。 */
+static bool s_notifications_enabled;
 /** 广播配置或启动失败后，延迟一秒重试。 */
 static struct ble_npl_callout s_advertise_retry;
 
@@ -62,8 +65,8 @@ static int gap_event(struct ble_gap_event *event, void *argument);
 static void advertise(struct ble_npl_event *event);
 
 /**
- * @brief 处理通信特征的读取和写入；读出 PONG，合法 PING 写入后调度 PONG 通知。
- * @param connection_handle 访问所属连接，本回调未使用；协议栈构造通知时也可触发读取。
+ * @brief 处理 PING/PONG 和 Sddd 角度命令；成功更新 PWM 后通知 Addd。
+ * @param connection_handle 访问所属连接，用于向写入方通知角度设置回执。
  * @param attribute_handle 当前特征值句柄，用于通知协议栈该特征已更新。
  * @param context 访问上下文，op 区分读写，om 为协议栈提供的链式数据缓冲区。
  * @param argument 注册特征时传入的用户参数，本回调未使用。
@@ -73,7 +76,6 @@ static void advertise(struct ble_npl_event *event);
 static int characteristic_access(uint16_t connection_handle, uint16_t attribute_handle,
                                  struct ble_gatt_access_ctxt *context, void *argument)
 {
-    (void)connection_handle;
     (void)argument;
 
     if (context->op == BLE_GATT_ACCESS_OP_READ_CHR)
@@ -99,15 +101,51 @@ static int characteristic_access(uint16_t connection_handle, uint16_t attribute_
     {
         return BLE_ATT_ERR_UNLIKELY;
     }
-    if (memcmp(request, BLE_LINK_PING, sizeof(request)) != 0)
+    if (memcmp(request, BLE_LINK_PING, sizeof(request)) == 0)
+    {
+        ESP_LOGI(TAG, "RX: PING");
+        /* 原有 PING/PONG 行为保持不变，协议栈只向已订阅的连接调度通知。 */
+        ble_gatts_chr_updated(attribute_handle);
+        ESP_LOGI(TAG, "TX: PONG queued");
+        return 0;
+    }
+
+    uint16_t angle;
+    if (request[0] != BLE_LINK_SERVO_SET ||
+        !ble_link_decode_angle(request, sizeof(request), &angle))
     {
         return BLE_ATT_ERR_VALUE_NOT_ALLOWED;
     }
+    if (!s_notifications_enabled)
+    {
+        return BLE_ATT_ERR_UNLIKELY;
+    }
 
-    ESP_LOGI(TAG, "RX: PING");
-    /* 官方接口只为已订阅的连接调度通知；排队完成不等于 S3 已收到回复。 */
-    ble_gatts_chr_updated(attribute_handle);
-    ESP_LOGI(TAG, "TX: PONG queued");
+    char response[BLE_LINK_MESSAGE_LENGTH];
+    ble_link_encode_angle(BLE_LINK_SERVO_ACK, angle, response);
+    /* 先准备本次回执的独立缓冲区，避免内容被下一条 PING 或角度命令覆盖。 */
+    struct os_mbuf *notification = ble_hs_mbuf_from_flat(response, sizeof(response));
+    if (notification == NULL)
+    {
+        return BLE_ATT_ERR_INSUFFICIENT_RES;
+    }
+    esp_err_t servo_result = servo_set_angle(angle);
+    if (servo_result != ESP_OK)
+    {
+        os_mbuf_free_chain(notification);
+        ESP_LOGE(TAG, "Servo PWM update failed; status=%d", servo_result);
+        return BLE_ATT_ERR_UNLIKELY;
+    }
+
+    ESP_LOGI(TAG, "RX: S%03u; PWM configured", (unsigned int)angle);
+    /* 此接口无论成功失败都会接管 mbuf；返回后不得再次释放。 */
+    result = ble_gatts_notify_custom(connection_handle, attribute_handle, notification);
+    if (result != 0)
+    {
+        ESP_LOGW(TAG, "Servo target set, but acknowledgement failed; status=%d", result);
+        return BLE_ATT_ERR_UNLIKELY;
+    }
+    ESP_LOGI(TAG, "TX: A%03u queued (PWM acknowledgement)", (unsigned int)angle);
     return 0;
 }
 
@@ -190,7 +228,7 @@ retry:
  * @param event 事件类型及其对应数据，只读取与 type 匹配的成员。
  * @param argument 注册 GAP 回调时传入的用户参数，本回调未使用。
  * @return 始终返回 0，表示本回调已处理或忽略该事件。
- * @note 订阅事件仅用于日志，实际订阅状态由 NimBLE 跟踪，供通知调度使用。
+ * @note 单连接订阅状态同时用于拒绝无法返回回执的角度命令。
  */
 static int gap_event(struct ble_gap_event *event, void *argument)
 {
@@ -211,6 +249,7 @@ static int gap_event(struct ble_gap_event *event, void *argument)
             return 0;
 
         case BLE_GAP_EVENT_DISCONNECT:
+            s_notifications_enabled = false;
             ESP_LOGI(TAG, "Disconnected; reason=%d", event->disconnect.reason);
             advertise(NULL);
             return 0;
@@ -222,6 +261,7 @@ static int gap_event(struct ble_gap_event *event, void *argument)
         case BLE_GAP_EVENT_SUBSCRIBE:
             if (event->subscribe.attr_handle == s_value_handle)
             {
+                s_notifications_enabled = event->subscribe.cur_notify;
                 ESP_LOGI(TAG, "PONG notifications %s",
                          event->subscribe.cur_notify ? "enabled" : "disabled");
             }
@@ -239,6 +279,7 @@ static int gap_event(struct ble_gap_event *event, void *argument)
  */
 static void on_reset(int reason)
 {
+    s_notifications_enabled = false;
     ble_npl_callout_stop(&s_advertise_retry);
     ESP_LOGE(TAG, "NimBLE reset; reason=%d", reason);
 }
@@ -276,5 +317,5 @@ void ble_controller_init(void)
 
     /* 使用主机默认事件队列，广播重试与 GAP 回调串行执行，无须额外应用任务。 */
     ble_npl_callout_init(&s_advertise_retry, nimble_port_get_dflt_eventq(), advertise, NULL);
-    ESP_LOGI(TAG, "Controller initialized; waiting for PING");
+    ESP_LOGI(TAG, "Controller initialized; waiting for PING or servo commands");
 }

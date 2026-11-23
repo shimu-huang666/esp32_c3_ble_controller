@@ -1,6 +1,6 @@
-# ESP32-C3 最小 BLE 主控
+# ESP32-C3 BLE 舵机控制器
 
-使用 ESP-IDF v6.1，从官方空白模板建立。C3 广播自己的通信服务，接受 S3 连接；收到合法 PING 后调度 PONG 通知，断连后恢复广播。
+使用 ESP-IDF v6.1。C3 广播通信服务，接受 S3 连接，处理 PING/PONG 和 SG90 目标角度命令，断连后恢复广播。
 
 ## 编译与烧录
 
@@ -20,12 +20,18 @@ idf.py -p COM8 flash monitor
 
 配套 S3 固件也需烧录并上电。C3 的广播名为 `BLE-C3-Controller`。连接并开启通知后，日志持续出现 `RX: PING` 和 `TX: PONG queued`；queued 表示已交给协议栈排队，实际接收以 S3 的 PONG 日志为准。退出串口监视器使用 Ctrl+]。
 
+## SG90 接线
+
+将 SG90 的信号线接 C3 的 GPIO4，舵机用 5 V 电源供电，舵机电源地与 C3 共地。C3 上电输出 50 Hz 的 PWM（脉宽调制）信号，初始目标为 90°。
+
+S3 订阅通知后可设置 0° 到 180° 的目标。C3 成功设置 PWM 后发送角度回执，实际转角在舵机上观察和测量。
+
 ## 通信方式
 
 BLE 是 Bluetooth Low Energy，低功耗蓝牙。C3 担任外围设备，负责广播；S3 担任中央设备，负责扫描和连接。GATT 是 Generic Attribute Profile，通用属性规范，通过“服务”和“特征”组织可读写的数据。
 
 - 服务 UUID（通用唯一标识符）放入广播包，设备名放入扫描响应，避免超过传统广播包的 31 字节长度限制。
-- 单个特征支持读取、写入和通知。读取返回 PONG；写入只接受四字节 PING；非法长度或内容返回 ATT（Attribute Protocol，属性协议）错误。
+- 单个特征支持读取、写入和通知。读取返回 PONG，写入接受四字节 PING 或角度命令。长度或内容非法时返回 ATT（Attribute Protocol，属性协议）错误。
 - S3 必须先开启通知订阅。C3 使用官方 ble_gatts_chr_updated 调度回复，由 NimBLE 跟踪订阅并构造通知。
 - PING 和 PONG 均为四字节 ASCII 文本，不附加字符串结束符或换行。当前单连接、无配对认证，服务 UUID 仅用于匹配协议，不代表设备身份认证。
 
@@ -88,7 +94,7 @@ python tests/verify_ble.py --port COM8
 
 随后重启 S3，确认 C3 断连后恢复广播，重新连接后继续响应；也检查 C3 重启后的恢复行为。
 
-首次交付的验证结果见 [docs/verification.md](docs/verification.md)。本阶段不接入 INMP441、SG90 或电源控制。
+首次交付的基础 BLE 验证记录见 [docs/verification.md](docs/verification.md)。
 
 ## 官方来源
 
