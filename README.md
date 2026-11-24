@@ -20,6 +20,16 @@ idf.py -p COM8 flash monitor
 
 配套 S3 固件也需烧录并上电。C3 的广播名为 `BLE-C3-Controller`。连接并开启通知后，日志持续出现 `RX: PING` 和 `TX: PONG queued`；queued 表示已交给协议栈排队，实际接收以 S3 的 PONG 日志为准。退出串口监视器使用 Ctrl+]。
 
+## 手机蓝牙升级
+
+首次在 ESP-IDF 插件中对 C3 执行完整的 **Build → Flash**。新版分区表会为固件留出两个槽，首次烧录同时写入引导程序、启动记录和可接收升级的应用。
+
+1. S3 在线时，点 S3 屏幕的 **OTA**，让出 C3 的蓝牙连接。
+2. 在安卓 [ESP BLE OTA](https://github.com/EspressifApps/esp-ble-ota-android/releases/tag/rc) 中选择 **BLE-C3-Controller**，发送本工程生成的应用文件 `esp32_c3_ble_controller.bin`。
+3. C3 校验镜像后重启，存储、舵机控制和蓝牙广播初始化通过才确认新版。串口日志会输出运行分区和版本。若使用了 S3，点 **Exit OTA** 恢复连接。
+
+写入中断时仍从原版本启动。当前升级沿用开发用的未配对蓝牙链路。
+
 ## SG90 接线
 
 将 SG90 的信号线接 C3 的 GPIO4，舵机用 5 V 电源供电，舵机电源地与 C3 共地。C3 上电输出 50 Hz 的 PWM（脉宽调制）信号，初始目标为 90°。
