@@ -9,6 +9,7 @@
 #include "nimble/nimble_port.h"
 #include "nimble/nimble_port_freertos.h"
 #include "nvs_flash.h"
+#include "ota_update.h"
 #include "servo_control.h"
 #include "esp_log.h"
 
@@ -45,5 +46,7 @@ void app_main(void)
     ESP_ERROR_CHECK(nimble_port_init());
 
     ble_controller_init();
+    ESP_ERROR_CHECK(ota_update_init());
     nimble_port_freertos_init(ble_host_task);
+    ota_update_confirm_boot(true);
 }

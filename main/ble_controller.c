@@ -37,6 +37,7 @@
 #include "host/ble_hs.h"
 #include "host/util/util.h"
 #include "nimble/nimble_port.h"
+#include "ota_update.h"
 #include "services/gap/ble_svc_gap.h"
 #include "services/gatt/ble_svc_gatt.h"
 
@@ -186,11 +187,15 @@ static void advertise(struct ble_npl_event *event)
     /* parameters 控制是否可连接、是否可发现，未显式设置的参数使用协议栈默认值。 */
     struct ble_gap_adv_params parameters = {0};
 
-    /* 标志字段与一个 128 位服务 UUID 可放入最长 31 字节的传统广播包。 */
+    /* 同时广播舵机服务和手机 OTA 服务，供 S3 和 APP 分别筛选。 */
+    ble_uuid16_t ota_uuid = BLE_UUID16_INIT(OTA_SERVICE_UUID16);
     fields.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
     fields.uuids128 = (ble_uuid128_t *)&SERVICE_UUID;
     fields.num_uuids128 = 1;
     fields.uuids128_is_complete = 1;
+    fields.uuids16 = &ota_uuid;
+    fields.num_uuids16 = 1;
+    fields.uuids16_is_complete = 1;
     int result = ble_gap_adv_set_fields(&fields); /* 广播配置或启动的返回码，0 表示成功。 */
     if (result != 0)
     {
@@ -215,6 +220,7 @@ static void advertise(struct ble_npl_event *event)
     if (result == 0)
     {
         ESP_LOGI(TAG, "Advertising as %s", DEVICE_NAME);
+        ota_update_ble_ready();
         return;
     }
 
@@ -233,6 +239,7 @@ retry:
 static int gap_event(struct ble_gap_event *event, void *argument)
 {
     (void)argument;
+    ota_update_gap_event(event);
 
     switch (event->type)
     {
@@ -280,6 +287,7 @@ static int gap_event(struct ble_gap_event *event, void *argument)
 static void on_reset(int reason)
 {
     s_notifications_enabled = false;
+    ota_update_link_reset();
     ble_npl_callout_stop(&s_advertise_retry);
     ESP_LOGE(TAG, "NimBLE reset; reason=%d", reason);
 }
